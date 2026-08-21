@@ -1,19 +1,24 @@
 """
 dimensa_auth.py - Módulo encapsulado para obtenção de Bearer Token do Dimensa Sign.
 
-Abre um navegador Chrome via Selenium, apresenta a página de login do Dimensa Sign,
-aguarda o login do usuário, intercepta o Bearer Token das respostas de rede,
-fecha o navegador e retorna o token.
+Abre um navegador (Chrome ou Edge) via Selenium, apresenta a página de login
+do Dimensa Sign, aguarda o login do usuário, intercepta o Bearer Token das
+respostas de rede, fecha o navegador e retorna o token.
 
-Cria um perfil de usuário persistente (user_profile/) na pasta do script para que
-o navegador lembre senhas salvas entre execuções.
+Cria um perfil de usuário persistente (user_profile/<navegador>/) na pasta do
+script para que o navegador lembre senhas salvas entre execuções.
+
+Navegadores suportados: chrome (padrão), edge.
+Firefox não é suportado pois não possui CDP (Chrome DevTools Protocol).
 
 Uso standalone:
-    python dimensa_auth.py
+    python dimensa_auth.py              # usa Chrome
+    python dimensa_auth.py --edge       # usa Edge
 
 Uso como módulo:
     from auth.dimensa_auth import obter_token_dimensa
-    token = obter_token_dimensa()
+    token = obter_token_dimensa()                        # Chrome
+    token = obter_token_dimensa(navegador="edge")        # Edge
 """
 
 import os
@@ -24,17 +29,16 @@ import logging
 from pathlib import Path
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import WebDriverException, TimeoutException
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.common.exceptions import WebDriverException
 
 # ---------------------------------------------------------------------------
 # Configurações
 # ---------------------------------------------------------------------------
 
 # URL de login do portal Dimensa Sign
-LOGIN_URL = "https://sign.dimensa.com.br/"
+LOGIN_URL = "https://sign.app.dimensa.com.br/adminsign"
 
 # Domínio da API cujas respostas contêm o Bearer Token
 API_DOMAIN = "api.assina.rbm.digital"
@@ -45,8 +49,11 @@ LOGIN_TIMEOUT = 300  # 5 minutos
 # Intervalo de polling para verificar as respostas de rede (em segundos)
 POLL_INTERVAL = 2
 
-# Nome da pasta do perfil do Chrome (criada junto ao script)
+# Nome da pasta-raiz dos perfis de navegador (criada junto ao script)
 PROFILE_DIR_NAME = "user_profile"
+
+# Navegadores suportados (ambos Chromium, compatíveis com CDP)
+NAVEGADORES_SUPORTADOS = ("chrome", "edge")
 
 # ---------------------------------------------------------------------------
 # Logger
@@ -69,35 +76,58 @@ def _configurar_logger(verbose: bool = False) -> None:
 # Funções internas
 # ---------------------------------------------------------------------------
 
-def _obter_caminho_perfil() -> str:
+def _obter_caminho_perfil(navegador: str = "chrome") -> str:
     """
-    Retorna o caminho absoluto para a pasta de perfil do Chrome.
+    Retorna o caminho absoluto para a pasta de perfil do navegador.
+    Cada navegador tem sua própria subpasta em user_profile/<navegador>/.
     A pasta é criada ao lado do próprio script (dimensa_auth.py).
     """
     script_dir = Path(__file__).resolve().parent
-    profile_path = script_dir / PROFILE_DIR_NAME
+    profile_path = script_dir / PROFILE_DIR_NAME / navegador
     profile_path.mkdir(parents=True, exist_ok=True)
-    logger.debug(f"Caminho do perfil do Chrome: {profile_path}")
+    logger.debug(f"Caminho do perfil ({navegador}): {profile_path}")
     return str(profile_path)
 
 
-def _criar_driver(headless: bool = False) -> webdriver.Chrome:
+def _criar_driver(
+    navegador: str = "chrome",
+    headless: bool = False,
+) -> webdriver.Chrome | webdriver.Edge:
     """
-    Cria e retorna uma instância do ChromeDriver configurada com:
+    Cria e retorna uma instância do WebDriver (Chrome ou Edge) configurada com:
     - Perfil de usuário persistente (para salvar senhas)
-    - Performance logging habilitado (para capturar tráfego de rede)
+    - Performance logging habilitado (para capturar tráfego de rede via CDP)
     """
-    profile_path = _obter_caminho_perfil()
+    navegador = navegador.lower().strip()
+    if navegador not in NAVEGADORES_SUPORTADOS:
+        raise ValueError(
+            f"Navegador '{navegador}' não suportado. "
+            f"Opções: {', '.join(NAVEGADORES_SUPORTADOS)}"
+        )
 
-    options = ChromeOptions()
+    profile_path = _obter_caminho_perfil(navegador)
+
+    # Seleciona a classe de Options e Driver conforme o navegador
+    if navegador == "edge":
+        options = EdgeOptions()
+        logging_pref_key = "ms:loggingPrefs"
+        driver_class = webdriver.Edge
+        browser_label = "Microsoft Edge"
+    else:  # chrome (padrão)
+        options = ChromeOptions()
+        logging_pref_key = "goog:loggingPrefs"
+        driver_class = webdriver.Chrome
+        browser_label = "Google Chrome"
+
+    # --- Configurações comuns (ambos são Chromium) ---
 
     # Perfil persistente — permite salvar senhas e cookies entre sessões
     options.add_argument(f"--user-data-dir={profile_path}")
 
     # Habilita logging de performance para capturar respostas de rede
-    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+    options.set_capability(logging_pref_key, {"performance": "ALL"})
 
-    # Desativa a barra "Chrome está sendo controlado por software de teste"
+    # Desativa a barra "controlado por software de teste"
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
@@ -111,22 +141,22 @@ def _criar_driver(headless: bool = False) -> webdriver.Chrome:
     options.add_argument("--start-maximized")
 
     try:
-        driver = webdriver.Chrome(options=options)
+        driver = driver_class(options=options)
     except WebDriverException as e:
         logger.error(
-            "Falha ao iniciar o Chrome. Verifique se o Chrome e o "
-            "ChromeDriver estão instalados e compatíveis."
+            f"Falha ao iniciar o {browser_label}. Verifique se o navegador "
+            "e o driver estão instalados e compatíveis."
         )
         raise RuntimeError(
-            "Não foi possível iniciar o navegador Chrome. "
-            "Certifique-se de que o Google Chrome está instalado."
+            f"Não foi possível iniciar o {browser_label}. "
+            f"Certifique-se de que o {browser_label} está instalado."
         ) from e
 
-    logger.info("Navegador Chrome iniciado com sucesso.")
+    logger.info(f"{browser_label} iniciado com sucesso.")
     return driver
 
 
-def _extrair_token_dos_logs(driver: webdriver.Chrome) -> str | None:
+def _extrair_token_dos_logs(driver: webdriver.Chrome | webdriver.Edge) -> str | None:
     """
     Analisa os logs de performance do Selenium para encontrar o Bearer Token
     nas respostas HTTP da API do Dimensa Sign.
@@ -251,9 +281,10 @@ def obter_token_dimensa(
     timeout: int = LOGIN_TIMEOUT,
     verbose: bool = False,
     headless: bool = False,
+    navegador: str = "chrome",
 ) -> str:
     """
-    Abre o navegador Chrome na página de login do Dimensa Sign, aguarda o
+    Abre o navegador na página de login do Dimensa Sign, aguarda o
     usuário fazer login, captura o Bearer Token das respostas de rede e
     retorna o token como string.
 
@@ -262,6 +293,7 @@ def obter_token_dimensa(
         timeout: Tempo máximo (em segundos) para aguardar o login.
         verbose: Se True, ativa logs detalhados (DEBUG).
         headless: Se True, executa o navegador em modo headless (sem janela).
+        navegador: Navegador a utilizar — "chrome" (padrão) ou "edge".
 
     Returns:
         O Bearer Token capturado (string).
@@ -269,11 +301,12 @@ def obter_token_dimensa(
     Raises:
         TimeoutError: Se o login não for realizado dentro do tempo limite.
         RuntimeError: Se não for possível iniciar o navegador.
+        ValueError: Se o navegador informado não for suportado.
     """
     _configurar_logger(verbose)
     logger.info("Iniciando processo de autenticação no Dimensa Sign...")
 
-    driver = _criar_driver(headless=headless)
+    driver = _criar_driver(navegador=navegador, headless=headless)
 
     try:
         # Habilita interceptação de rede via CDP (Chrome DevTools Protocol)
@@ -320,13 +353,29 @@ def obter_token_dimensa(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Captura Bearer Token do Dimensa Sign via login no navegador."
+    )
+    parser.add_argument(
+        "--edge",
+        action="store_const",
+        const="edge",
+        default="chrome",
+        dest="navegador",
+        help="Usar Microsoft Edge em vez do Google Chrome.",
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("  Dimensa Sign — Captura de Bearer Token")
+    print(f"  Navegador: {args.navegador}")
     print("=" * 60)
     print()
 
     try:
-        token = obter_token_dimensa(verbose=True)
+        token = obter_token_dimensa(verbose=True, navegador=args.navegador)
         print()
         print("=" * 60)
         print("  TOKEN CAPTURADO:")
@@ -336,6 +385,6 @@ if __name__ == "__main__":
     except TimeoutError as e:
         print(f"\n❌ ERRO: {e}")
         sys.exit(1)
-    except RuntimeError as e:
+    except (RuntimeError, ValueError) as e:
         print(f"\n❌ ERRO: {e}")
         sys.exit(1)
