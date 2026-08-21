@@ -225,3 +225,4 @@ __marimo__/
 # custom
 *.yml
 *.yaml
+user_profile/
