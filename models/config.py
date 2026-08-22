@@ -1,5 +1,5 @@
 from dataclasses import dataclass, asdict
-import os
+import pathlib
 import yaml
 
 @dataclass
@@ -11,17 +11,17 @@ class AppConfigData:
 class AppConfig:
     
     def __init__(self, config_path:str="./config/config.yml"):
-        self.config_path = config_path
+        self.config_path = pathlib.Path(config_path)
         self.data: AppConfigData = self._load()
 
     # --- PRIVATE METHODS --- #
     def _load(self) -> AppConfigData:
-        if not os.path.exists(self.config_path):
+        if not self.config_path.exists():
             data = AppConfigData()
             self.save(data)
             return data
 
-        with open(self.config_path, 'r', encoding='utf-8') as file:
+        with self.config_path.open('r', encoding='utf-8') as file:
             raw = yaml.safe_load(file)
         
         try:
@@ -34,6 +34,6 @@ class AppConfig:
     def save(self, data: AppConfigData | None = None) -> None:
         if data is not None:
             self.data = data
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, 'w', encoding='utf-8') as file:
+        self.config_path.parent.mkdir(exist_ok=True)
+        with self.config_path.open('w', encoding='utf-8') as file:
             yaml.safe_dump(asdict(self.data), file, default_flow_style=False, allow_unicode=True)
