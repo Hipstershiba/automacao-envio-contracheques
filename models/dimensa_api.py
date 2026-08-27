@@ -1,5 +1,6 @@
 import requests
 import pathlib
+import logging
 
 
 class DimensaAPI:
@@ -14,10 +15,11 @@ class DimensaAPI:
         data = {"cpfCnpj": cpf}
         try:
             response = self.session.post(url, data=data)
+            logging.debug(response.json())
             response.raise_for_status()
             return response.json()["payload"]["signatario"]
         except requests.exceptions.HTTPError as e:
-            raise Exception(f"Erro HTTP: {e}")
+            raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
         except requests.exceptions.RequestException as e:
             raise Exception(f"Erro: {e}")
 
@@ -29,34 +31,36 @@ class DimensaAPI:
             "limit": str(limit)}
         try:
             response = self.session.get(url, data=data)
+            logging.debug(response.json())
             response.raise_for_status()
             return response.json()["payload"]["signatarios"]
         except requests.exceptions.HTTPError as e:
-            raise Exception(f"Erro HTTP: {e}")
+            raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
         except requests.exceptions.RequestException as e:
             raise Exception(f"Erro: {e}")
 
-    def send_doccument(self, file_path:pathlib.Path, doc_name:str, code:str, signer_cpf:str, signer_name:str):
+    def send_document(self, file_path:pathlib.Path, doc_name:str, code:str):
         url = f"{self.base_url}/documentos"
 
         with file_path.open("rb") as file:
             files = {
-                "arquivo": (file_path.name, file)
+                "arquivo": (file_path.name, file, "application/pdf")
             }
 
-        data = {
-            "fileName": doc_name,
-            "numero": code,
-        }
-        
-        try:
-            response = self.session.post(url, files=files, data=data)
-            response.raise_for_status()
-            return response.json()["payload"]["documentos"]["id"]
-        except requests.exceptions.HTTPError as error:
-            raise Exception(f"Erro HTTP: {error}")
-        except requests.exceptions.RequestException as error:
-            raise Exception(f"Erro: {error}")
+            data = {
+                "fileName": doc_name,
+                "numero": code,
+            }
+            
+            try:
+                response = self.session.post(url, files=files, data=data)
+                logging.debug(response.json())
+                response.raise_for_status()
+                return response.json()["payload"]["documento"]["id"]
+            except requests.exceptions.HTTPError as error:
+                raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
+            except requests.exceptions.RequestException as error:
+                raise Exception(f"Erro: {error}")
 
     def add_sig(self, document_id:str, signatory:dict, signature_type:str):
         url = f"{self.base_url}/documentos/addSig/{document_id}"
@@ -72,13 +76,10 @@ class DimensaAPI:
 
         try:
             response = self.session.post(url, data=data)
+            logging.debug(response.json())
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as error:
-            raise Exception(f"Erro HTTP: {error}")
+            raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
         except requests.exceptions.RequestException as error:
-            raise Exception(f"Erro: {error}")   
-
-
-
-        
+            raise Exception(f"Erro: {error}")
