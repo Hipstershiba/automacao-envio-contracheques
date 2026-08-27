@@ -30,7 +30,7 @@ class AppConfig:
             raise ValueError(f"Erro ao carregar configurações: {e}")
 
 
-    # --- PUBLIC METHODS --- 
+    # --- PUBLIC METHODS --- #
     def save(self, data: AppConfigData | None = None) -> None:
         if data is not None:
             self.data = data
