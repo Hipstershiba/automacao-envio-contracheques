@@ -57,3 +57,28 @@ class DimensaAPI:
             raise Exception(f"Erro HTTP: {error}")
         except requests.exceptions.RequestException as error:
             raise Exception(f"Erro: {error}")
+
+    def add_sig(self, document_id:str, signatory:dict, signature_type:str):
+        url = f"{self.base_url}/documentos/addSig/{document_id}"
+
+        data = {
+            "id": signatory["id"],
+            "cpfCnpj": signatory["cpfCnpj"],
+            "nome": signatory["nome"],
+            "tipoAss": signature_type,
+            "tipoAut": "email",
+            "email": signatory["email"]
+        }
+
+        try:
+            response = self.session.post(url, data=data)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as error:
+            raise Exception(f"Erro HTTP: {error}")
+        except requests.exceptions.RequestException as error:
+            raise Exception(f"Erro: {error}")   
+
+
+
+        
