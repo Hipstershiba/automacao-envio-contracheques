@@ -26,6 +26,8 @@ import sys
 import json
 import time
 import logging
+
+import requests
 from pathlib import Path
 
 from selenium import webdriver
@@ -42,6 +44,15 @@ LOGIN_URL = "https://sign.app.dimensa.com.br/adminsign"
 
 # Domínio da API cujas respostas contêm o Bearer Token
 API_DOMAIN = "api.assina.rbm.digital"
+
+# Caminho da URL de login (usado para detectar se estamos na tela de login)
+LOGIN_PATH = "/adminsign/login"
+
+# Endpoint autenticado para validação do token capturado
+TOKEN_VALIDATION_URL = "https://api.assina.rbm.digital/api/v2/usuarios/info"
+
+# Timeout para a chamada HTTP de validação do token (segundos)
+TOKEN_VALIDATION_TIMEOUT = 5
 
 # Tempo máximo (em segundos) para aguardar o usuário fazer login
 LOGIN_TIMEOUT = 300  # 5 minutos
@@ -272,6 +283,80 @@ def _extrair_token_dos_logs(driver: webdriver.Chrome | webdriver.Edge) -> str | 
     return None
 
 
+def _validar_token(token: str) -> bool:
+    """
+    Valida o token capturado fazendo uma chamada autenticada à API.
+
+    Faz GET em /api/v2/usuarios/info com o token no header Authorization.
+    Se a API retornar 2xx, o token é válido. Qualquer outro status ou
+    erro de conexão indica token inválido.
+
+    Returns:
+        True se o token for válido (API retornou 2xx), False caso contrário.
+    """
+    try:
+        response = requests.get(
+            TOKEN_VALIDATION_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=TOKEN_VALIDATION_TIMEOUT,
+        )
+        if response.ok:
+            logger.debug("Token validado com sucesso pela API.")
+            return True
+        else:
+            logger.debug(
+                f"Token inválido — API retornou status {response.status_code}."
+            )
+            return False
+    except requests.RequestException as e:
+        logger.debug(f"Erro ao validar token: {e}")
+        return False
+
+
+def _aguardar_pagina_login(
+    driver: webdriver.Chrome | webdriver.Edge,
+    timeout: float,
+) -> None:
+    """
+    Aguarda até que a URL do navegador contenha o caminho de login.
+
+    Quando o navegador tem uma sessão anterior (cookies/perfil persistente),
+    o portal pode redirecionar brevemente para o dashboard antes de invalidar
+    a sessão e redirecionar de volta para o login. Esta função aguarda essa
+    transição e, ao detectar a página de login, descarta todos os logs de
+    performance acumulados (flush) para eliminar tokens expirados.
+
+    Chamada apenas quando um token capturado falha na validação (sessão
+    expirada), sinalizando que o usuário precisará fazer login novamente.
+
+    Raises:
+        TimeoutError: Se a página de login não aparecer dentro do timeout.
+    """
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        current_url = driver.current_url
+        if LOGIN_PATH in current_url:
+            logger.info("Página de login detectada. Descartando logs antigos...")
+            # Flush: descarta logs de performance acumulados durante
+            # redirecionamentos (podem conter tokens expirados)
+            try:
+                driver.get_log("performance")
+            except WebDriverException:
+                pass
+            logger.info(
+                "Aguardando login do usuário... "
+                "Faça login no navegador que foi aberto."
+            )
+            return
+        time.sleep(POLL_INTERVAL)
+
+    raise TimeoutError(
+        f"Tempo limite de {timeout:.0f}s excedido aguardando a página de login. "
+        "A página de login do Dimensa Sign não foi carregada."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Função pública principal
 # ---------------------------------------------------------------------------
@@ -314,28 +399,45 @@ def obter_token_dimensa(
         logger.info(f"Abrindo página de login: {login_url}")
         driver.get(login_url)
 
-        logger.info(
-            f"Aguardando login do usuário (timeout: {timeout}s)... "
-            "Faça login no navegador que foi aberto."
-        )
+        logger.info(f"Aguardando autenticação (timeout: {timeout}s)...")
 
         start_time = time.time()
         token = None
+        login_aguardado = False
 
         while time.time() - start_time < timeout:
             token = _extrair_token_dos_logs(driver)
             if token:
-                break
+                # Valida o token capturado via chamada à API.
+                # Se a sessão anterior ainda estiver ativa, o token será
+                # válido e o script retorna imediatamente (sem re-login).
+                if _validar_token(token):
+                    break
+
+                # Token inválido (sessão expirada). Aguarda a página de
+                # login carregar e faz flush dos logs antigos — apenas
+                # na primeira vez que isso acontece.
+                if not login_aguardado:
+                    logger.info(
+                        "Token da sessão anterior é inválido (expirado). "
+                        "Aguardando página de login..."
+                    )
+                    tempo_restante = timeout - (time.time() - start_time)
+                    _aguardar_pagina_login(driver, tempo_restante)
+                    login_aguardado = True
+
+                token = None
+
             time.sleep(POLL_INTERVAL)
 
         if not token:
             raise TimeoutError(
                 f"Tempo limite de {timeout}s excedido. "
-                "Nenhum Bearer Token foi capturado. "
+                "Nenhum Bearer Token válido foi capturado. "
                 "Certifique-se de fazer login no portal Dimensa Sign."
             )
 
-        logger.info("✅ Bearer Token capturado com sucesso!")
+        logger.info("✅ Bearer Token capturado e validado com sucesso!")
         logger.debug(f"Token (primeiros 30 chars): {token[:30]}...")
         return token
 
