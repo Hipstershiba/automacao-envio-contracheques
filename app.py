@@ -14,7 +14,7 @@ def main():
     bearer_token = obter_token_dimensa(navegador="edge")
     api_url = "https://api.assina.rbm.digital/api"
     dimensa = DimensaAPI(auth_token=bearer_token, base_url=api_url)
-    print(dimensa.get_signatories())
+    print(dimensa.list_signatories())
     logger.stop()
 
 if __name__ == "__main__":

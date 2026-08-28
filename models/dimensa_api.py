@@ -10,7 +10,7 @@ class DimensaAPI:
         self.session = requests.Session()
         self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})    
 
-    def get_signatory(self, cpf:str):
+    def find_signatory(self, cpf:str):
         url = f"{self.base_url}/signatario/find"
         data = {"cpfCnpj": cpf}
         try:
@@ -18,12 +18,12 @@ class DimensaAPI:
             logging.debug(response.json())
             response.raise_for_status()
             return response.json()["payload"]["signatario"]
-        except requests.exceptions.HTTPError as e:
-            raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Erro: {e}")
+        except requests.exceptions.HTTPError as error:
+            raise Exception(f"{error}\n{error.response.text}")
+        except requests.exceptions.RequestException as error:
+            raise Exception(f"{error}")
 
-    def get_signatories(self, search:str|None=None, page:int|None=None, limit:int|None=None):
+    def list_signatories(self, search:str|None=None, page:int|None=None, limit:int|None=None):
         url = f"{self.base_url}/signatario/list"
         data = {
             "search": search,
@@ -34,12 +34,12 @@ class DimensaAPI:
             logging.debug(response.json())
             response.raise_for_status()
             return response.json()["payload"]["signatarios"]
-        except requests.exceptions.HTTPError as e:
-            raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Erro: {e}")
+        except requests.exceptions.HTTPError as error:
+            raise Exception(f"{error}\n{error.response.text}")
+        except requests.exceptions.RequestException as error:
+            raise Exception(f"{error}")
 
-    def send_document(self, file_path:pathlib.Path, doc_name:str, code:str):
+    def upload_document(self, file_path:pathlib.Path, doc_name:str, code:str):
         url = f"{self.base_url}/documentos"
 
         with file_path.open("rb") as file:
@@ -58,11 +58,11 @@ class DimensaAPI:
                 response.raise_for_status()
                 return response.json()["payload"]["documento"]["id"]
             except requests.exceptions.HTTPError as error:
-                raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
+                raise Exception(f"{error}\n{error.response.text}")
             except requests.exceptions.RequestException as error:
-                raise Exception(f"Erro: {error}")
+                raise Exception(f"{error}")
 
-    def add_sig(self, document_id:str, signatory:dict, signature_type:str):
+    def add_signatory(self, document_id:str, signatory:dict, signature_type:str):
         url = f"{self.base_url}/documentos/addSig/{document_id}"
 
         data = {
@@ -80,6 +80,6 @@ class DimensaAPI:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as error:
-            raise Exception(f"Erro HTTP: {error}\nDetalhes da API: {error.response.text}")
+            raise Exception(f"{error}\n{error.response.text}")
         except requests.exceptions.RequestException as error:
-            raise Exception(f"Erro: {error}")
+            raise Exception(f"{error}")
